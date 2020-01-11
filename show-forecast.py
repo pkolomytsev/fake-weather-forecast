@@ -270,9 +270,6 @@ class App:
             sorted_stat = sorted(stat.items(), key=lambda u: u[1][i])
             print_sorted_stat(sorted_stat, ext_method, lambda u: u[i])
 
-        sorted_by_summary_error = sorted(stat.items(), key=lambda u: sum(u[1]))
-        print_sorted_stat(sorted_by_summary_error, 'summary', lambda u: sum(u))
-
     @classmethod
     def main(cls) -> int:
         options = Options.from_command_line()
