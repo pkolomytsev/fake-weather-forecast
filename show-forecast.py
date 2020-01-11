@@ -93,6 +93,9 @@ class DataSet:
         else:
             return type(self)(numpy.array([self.dates[item]]), numpy.array([self.values[item]]))
 
+    def __len__(self):
+        return len(self.dates)
+
     @staticmethod
     def date_to_stamp(date: int) -> str:
         year = date // 12 + ZERO_YEAR
@@ -242,13 +245,17 @@ class App:
 
         axis.set_xlabel('Date', fontsize=14)
         axis.set_ylabel(r'Average Monthly Temperature ($^\circ$C)', fontsize=14)
-        pyplot.title(f'Climate data ({station_name})')
+        pyplot.title(f'Climate data ({station_name})', fontsize=18)
         pyplot.xticks(xticks, (DataSet.date_to_stamp(d) for d in xticks), rotation=70)
         pyplot.grid()
-        pyplot.legend(legend, loc='upper left')
+        pyplot.legend(legend, loc='upper left', fontsize=14)
         pyplot.savefig(f'{station_name}-{fig_type}.png', dpi=300)
 
-    def analyse_all_data_sets(self) -> STAT_T:
+    def analyse_all_data_sets(self, experimental_range: int = None, forecast_range: int = None) -> STAT_T:
+        if not experimental_range:
+            experimental_range = self.options.experimental_range
+        if not forecast_range:
+            forecast_range = self.options.forecast_range
         stat = {}
 
         builders_by_methods = {
@@ -258,8 +265,10 @@ class App:
         }
 
         for sid, data in self.vault.iter_all_climate_data():
-            training_data = data[-self.options.experimental_range:-self.options.forecast_range]
-            forecast_data = data[-self.options.forecast_range:]
+            if len(data) < experimental_range:
+                continue
+            training_data = data[-experimental_range:-forecast_range]
+            forecast_data = data[-forecast_range:]
             station_stat = stat[sid] = {}
 
             for method, builder in builders_by_methods.items():
@@ -269,21 +278,22 @@ class App:
         return stat
 
     @staticmethod
-    def get_methods_score(stat: STAT_T) -> Dict[str, int]:
-        score = defaultdict(int)
+    def get_methods_score(stat: STAT_T) -> Tuple[Dict[str, int], Dict[str, float]]:
+        asb_score = defaultdict(int)
         for errors in stat.values():
             winner = min(errors, key=lambda u: errors[u])
-            score[winner] += 1
-        return score
+            asb_score[winner] += 1
+        total = sum(asb_score.values())
+        rel_score = {method: value / total * 100 for method, value in asb_score.items()}
+        return asb_score, rel_score
 
     def print_predictors_stat(self, stat: STAT_T) -> None:
         stations = self.vault.stations
 
         print(f'Predictors score:')
-        score = self.get_methods_score(stat)
-        total = sum(score.values())
-        for method, value in sorted(score.items(), key=lambda u: u[1], reverse=True):
-            print(f'  {method}: {value / total * 100:.1f}% ({value})')
+        asb_score, rel_score = self.get_methods_score(stat)
+        for method in sorted(asb_score, key=lambda u: asb_score[u], reverse=True):
+            print(f'  {method}: {rel_score[method]:.1f}% ({asb_score[method]})')
         print()
 
         def print_sorted_stat(_stat: List, _method: str) -> None:
@@ -296,22 +306,39 @@ class App:
                 print(f'  {_sid:05d}: {stations[_sid]:20s} -- {_errors[_method]:6.3f}')
             print()
 
-        for method in score:
+        for method in asb_score:
             sorted_stat = sorted(stat.items(), key=lambda u: u[1][method])
             print_sorted_stat(sorted_stat, method)
 
-    def profile_methods(self):
-        for forecast_range in (1, 3, 5):
+    def profile_methods(self) -> None:
+        experimental_range_list = list(range(120, self.options.experimental_range + 1, 60))
+        forecast_range_list = list(range(12, self.options.forecast_range + 1, 24))
+        for forecast_range in forecast_range_list:
             profile = defaultdict(list)
-            for experimental_range in range(5, 70, 5):
-                stat = self.analyse_all_data_sets(experimental_range * 12, forecast_range * 12)
-                score = self.get_methods_score(stat)
-                total = sum(score.values())
-                for method, value in score:
-                    profile[method].append(value / total)
+            profile_ticks = []
+            for experimental_range in experimental_range_list:
+                experiment_depth = experimental_range // 12
+                print(f'profile: forecast - {forecast_range // 12}; experiment - {experiment_depth}')
+                stat = self.analyse_all_data_sets(experimental_range, forecast_range)
+                rel_score = self.get_methods_score(stat)[1]
+                for method, value in rel_score.items():
+                    profile[method].append(value)
+                profile_ticks.append(experiment_depth)
+            self.render_profile(profile, profile_ticks, forecast_range // 12)
 
-    def render_profile(self, profile, forecast_range):
-        pass
+    @staticmethod
+    def render_profile(profile: Dict[str, List[float]], profile_ticks: List[int], forecast_depth: int) -> None:
+        legend = sorted(profile)
+        figure, axis = pyplot.subplots()
+        for method in legend:
+            pyplot.plot(profile_ticks, profile[method], linewidth=3)
+        figure.set_size_inches(16, 9)
+        axis.set_xlabel('Experiment depth (years)', fontsize=14)
+        axis.set_ylabel('Predictor score (%)', fontsize=14)
+        pyplot.title(f'Predictors profile ({forecast_depth} years)', fontsize=18)
+        pyplot.grid()
+        pyplot.legend(legend, loc='upper left', fontsize=14)
+        pyplot.savefig(f'predictors-profile-{forecast_depth:02d}-years.png', dpi=300)
 
     @classmethod
     def main(cls) -> int:

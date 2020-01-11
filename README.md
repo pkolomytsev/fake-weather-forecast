@@ -32,3 +32,6 @@ This project uses [Python 3.6+](https://www.python.org/downloads/release/python-
 
     # analyse data sets and render forcast graphics for the selected stations (see ./data or data.zip)
     python show-forecast.py -e 10 -f 1 22003 28009 29467
+    
+    # profile prediction methods (may be slow)
+    python show-forecast.py -p -e 70 -f 5
