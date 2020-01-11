@@ -156,11 +156,7 @@ def make_prediction(ext_method: Callable, dates: numpy.ndarray) -> DataSet:
 
 
 def eval_error(experimental_values: numpy.ndarray, prediction_values: numpy.ndarray) -> float:
-    error = 0.0
-    for exp, pred in zip(experimental_values, prediction_values):
-        error += (exp - pred) ** 2
-    error = math.sqrt(error / len(experimental_values))
-    return error
+    return math.sqrt(numpy.sum((experimental_values - prediction_values) ** 2) / len(experimental_values))
 
 
 def get_extrapolation_function_by_least_squares(data: DataSet) -> Callable:
