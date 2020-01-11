@@ -1,0 +1,4 @@
+dataclasses==0.7;python_version < '3.7'
+matplotlib
+numpy
+scipy
