@@ -93,6 +93,23 @@ class DataSet:
         month = date % 12 + 1
         return f'{year}.{month:02d}'
 
+    @classmethod
+    def from_file(cls, path: str) -> 'DataSet':
+        dates = []
+        t_values = []
+        with open(path, encoding='utf-8') as f:
+            data_reader = csv.reader(f, delimiter=';')
+            for station_id, year, *values in data_reader:
+                for month, t in enumerate(values):
+                    try:
+                        date = (int(year) - ZERO_YEAR) * 12 + month
+                        t = float(t)
+                    except ValueError:
+                        continue
+                    dates.append(date)
+                    t_values.append(t)
+        return cls(numpy.array(dates), numpy.array(t_values))
+
 
 class DataVault:
     STATIONS_TABLE = 'stations.txt'
@@ -112,28 +129,16 @@ class DataVault:
                 sid, name = line.split(' ', 1)
                 self.stations[int(sid)] = name.strip()
 
-    def extract_climate_data(self, station_id: int) -> DataSet:
-        dates = []
-        t_values = []
-        with (self.root / f'{station_id}.txt').open(encoding='utf-8') as f:
-            data_reader = csv.reader(f, delimiter=';')
-            for station_id, year, *values in data_reader:
-                for month, t in enumerate(values):
-                    try:
-                        date = (int(year) - ZERO_YEAR) * 12 + month
-                        t = float(t)
-                    except ValueError:
-                        continue
-                    dates.append(date)
-                    t_values.append(t)
-        return DataSet(numpy.array(dates), numpy.array(t_values))
+    def get_climate_data(self, station_id: int) -> DataSet:
+        path = self.root / f'{station_id}.txt'
+        return DataSet.from_file(str(path))
 
-    def iter_climate_data(self) -> Iterable[Tuple[int, DataSet]]:
+    def iter_all_climate_data(self) -> Iterable[Tuple[int, DataSet]]:
         for file in self.root.iterdir():
             if file.name == self.STATIONS_TABLE:
                 continue
             sid = int(os.path.splitext(file.name)[0])
-            yield sid, self.extract_climate_data(sid)
+            yield sid, self.get_climate_data(sid)
 
 
 def render(experiment: DataSet, prediction: DataSet, station_name: str, prediction_method: str = None) -> None:
@@ -213,7 +218,7 @@ class App:
     def show(self, station_id: int) -> None:
         station_name = self.vault.stations[station_id]
         print(f'{station_id:05d}: {station_name}')
-        data = self.vault.extract_climate_data(station_id)
+        data = self.vault.get_climate_data(station_id)
         training_data = data[-self.options.experimental_range:-self.options.forecast_range]
         forecast_data = data[-self.options.forecast_range:]
 
@@ -238,7 +243,7 @@ class App:
     def analyse_all_data_sets(self) -> None:
         stations = self.vault.stations
         stat = {}
-        for station_id, data in self.vault.iter_climate_data():
+        for station_id, data in self.vault.iter_all_climate_data():
             training_data = data[-self.options.experimental_range:-self.options.forecast_range]
             forecast_data = data[-self.options.forecast_range:]
 
