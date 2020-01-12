@@ -138,9 +138,13 @@ class DataVault:
                 sid, name = line.split(' ', 1)
                 self.stations[int(sid)] = name.strip()
 
+        self.cache: Dict[int, DataSet] = {}
+
     def get_climate_data(self, station_id: int) -> DataSet:
-        path = self.root / f'{station_id}.txt'
-        return DataSet.from_file(str(path))
+        if station_id not in self.cache:
+            path = self.root / f'{station_id}.txt'
+            self.cache[station_id] = DataSet.from_file(str(path))
+        return self.cache[station_id]
 
     def iter_all_climate_data(self) -> Iterable[Tuple[int, DataSet]]:
         for file in self.root.iterdir():
@@ -186,8 +190,55 @@ def get_simple_extrapolation_function(data: DataSet, stat_method: Callable) -> C
     return fit
 
 
+def render_prediction(experiment: DataSet, prediction: DataSet, station_name: str, method: str = None) -> None:
+    if len(experiment.dates) == 12:
+        xticks = experiment.dates
+    else:
+        xticks = experiment.dates[::12]
+    figure, axis = pyplot.subplots()
+    figure.set_size_inches(16, 9)
+
+    if method:
+        legend = ('Experimental', f'Fit by {method}')
+        fig_type = 'forecast-by-' + method.replace(' ', '-')
+    else:
+        legend = ('Experimental', 'Fit')
+        fig_type = 'forecast'
+
+    pyplot.plot(experiment.dates, experiment.values, 'vk:')
+    pyplot.plot(prediction.dates, prediction.values, '^r:')
+
+    axis.set_xlabel('Date', fontsize=14)
+    axis.set_ylabel(r'Average Monthly Temperature ($^\circ$C)', fontsize=14)
+    pyplot.title(f'Climate data ({station_name})', fontsize=18)
+    pyplot.xticks(xticks, (DataSet.date_to_stamp(d) for d in xticks), rotation=70)
+    pyplot.grid()
+    pyplot.legend(legend, loc='upper left', fontsize=14)
+    pyplot.savefig(f'{station_name}-{fig_type}.png', dpi=300)
+
+
+def render_profile(profile: Dict[str, List[float]], profile_ticks: List[int], forecast_depth: int) -> None:
+    legend = sorted(profile)
+    figure, axis = pyplot.subplots()
+    for method in legend:
+        pyplot.plot(profile_ticks, profile[method], linewidth=3)
+    figure.set_size_inches(16, 9)
+    axis.set_xlabel('Experiment depth (years)', fontsize=14)
+    axis.set_ylabel('Predictor score (%)', fontsize=14)
+    pyplot.title(f'Predictors profile ({forecast_depth} years)', fontsize=18)
+    pyplot.grid()
+    pyplot.legend(legend, loc='upper left', fontsize=14)
+    pyplot.savefig(f'predictors-profile-{forecast_depth:02d}-years.png', dpi=300)
+
+
 class App:
     STAT_T = Dict[int, Dict[str, float]]
+
+    EXT_METHODS = {
+        'least squares': get_extrapolation_function_by_least_squares,
+        'median': lambda d: get_simple_extrapolation_function(d, numpy.median),
+        'average': lambda d: get_simple_extrapolation_function(d, numpy.average)
+    }
 
     def __init__(self, options: Options = None):
         if not options:
@@ -202,50 +253,12 @@ class App:
         training_data = data[-self.options.experimental_range:-self.options.forecast_range]
         forecast_data = data[-self.options.forecast_range:]
 
-        f = get_extrapolation_function_by_least_squares(training_data)
-        prediction = make_prediction(f, forecast_data.dates)
-        error = eval_error(forecast_data.values, prediction.values)
-        print(f'Least squares fit error = {error:3.3f}')
-        self.render_prediction(forecast_data, prediction, station_name, 'least squares')
-
-        f = get_simple_extrapolation_function(training_data, numpy.median)
-        prediction = make_prediction(f, forecast_data.dates)
-        error = eval_error(forecast_data.values, prediction.values)
-        print(f'Median fit error = {error:3.3f}')
-        self.render_prediction(forecast_data, prediction, station_name, 'median')
-
-        f = get_simple_extrapolation_function(training_data, numpy.average)
-        prediction = make_prediction(f, forecast_data.dates)
-        error = eval_error(forecast_data.values, prediction.values)
-        print(f'Average fit error = {error:3.3f}')
-        self.render_prediction(forecast_data, prediction, station_name, 'average')
-
-    @staticmethod
-    def render_prediction(experiment: DataSet, prediction: DataSet, station_name: str, method: str = None) -> None:
-        if len(experiment.dates) == 12:
-            xticks = experiment.dates
-        else:
-            xticks = experiment.dates[::12]
-        figure, axis = pyplot.subplots()
-        figure.set_size_inches(16, 9)
-
-        if method:
-            legend = ('Experimental', f'Fit by {method}')
-            fig_type = 'forecast-by-' + method.replace(' ', '-')
-        else:
-            legend = ('Experimental', 'Fit')
-            fig_type = 'forecast'
-
-        pyplot.plot(experiment.dates, experiment.values, 'vk:')
-        pyplot.plot(prediction.dates, prediction.values, '^r:')
-
-        axis.set_xlabel('Date', fontsize=14)
-        axis.set_ylabel(r'Average Monthly Temperature ($^\circ$C)', fontsize=14)
-        pyplot.title(f'Climate data ({station_name})', fontsize=18)
-        pyplot.xticks(xticks, (DataSet.date_to_stamp(d) for d in xticks), rotation=70)
-        pyplot.grid()
-        pyplot.legend(legend, loc='upper left', fontsize=14)
-        pyplot.savefig(f'{station_name}-{fig_type}.png', dpi=300)
+        for method, builder in self.EXT_METHODS.items():
+            f = builder(training_data)
+            prediction = make_prediction(f, forecast_data.dates)
+            error = eval_error(forecast_data.values, prediction.values)
+            print(f'{method} fit error = {error:3.3f}')
+            render_prediction(forecast_data, prediction, station_name, method)
 
     def analyse_all_data_sets(self, experimental_range: int = None, forecast_range: int = None) -> STAT_T:
         if not experimental_range:
@@ -254,12 +267,6 @@ class App:
             forecast_range = self.options.forecast_range
         stat = {}
 
-        builders_by_methods = {
-            'least squares': get_extrapolation_function_by_least_squares,
-            'median': lambda d: get_simple_extrapolation_function(d, numpy.median),
-            'average': lambda d: get_simple_extrapolation_function(d, numpy.average)
-        }
-
         for sid, data in self.vault.iter_all_climate_data():
             if len(data) < experimental_range:
                 continue
@@ -267,21 +274,11 @@ class App:
             forecast_data = data[-forecast_range:]
             station_stat = stat[sid] = {}
 
-            for method, builder in builders_by_methods.items():
+            for method, builder in self.EXT_METHODS.items():
                 f = builder(training_data)
                 prediction = make_prediction(f, forecast_data.dates)
                 station_stat[method] = eval_error(forecast_data.values, prediction.values)
         return stat
-
-    @staticmethod
-    def get_methods_score(stat: STAT_T) -> Tuple[Dict[str, int], Dict[str, float]]:
-        asb_score = defaultdict(int)
-        for errors in stat.values():
-            winner = min(errors, key=lambda u: errors[u])
-            asb_score[winner] += 1
-        total = sum(asb_score.values())
-        rel_score = {method: value / total * 100 for method, value in asb_score.items()}
-        return asb_score, rel_score
 
     def print_predictors_stat(self, stat: STAT_T) -> None:
         stations = self.vault.stations
@@ -320,21 +317,17 @@ class App:
                 for method, value in rel_score.items():
                     profile[method].append(value)
                 profile_ticks.append(experiment_depth)
-            self.render_profile(profile, profile_ticks, forecast_range // 12)
+            render_profile(profile, profile_ticks, forecast_range // 12)
 
     @staticmethod
-    def render_profile(profile: Dict[str, List[float]], profile_ticks: List[int], forecast_depth: int) -> None:
-        legend = sorted(profile)
-        figure, axis = pyplot.subplots()
-        for method in legend:
-            pyplot.plot(profile_ticks, profile[method], linewidth=3)
-        figure.set_size_inches(16, 9)
-        axis.set_xlabel('Experiment depth (years)', fontsize=14)
-        axis.set_ylabel('Predictor score (%)', fontsize=14)
-        pyplot.title(f'Predictors profile ({forecast_depth} years)', fontsize=18)
-        pyplot.grid()
-        pyplot.legend(legend, loc='upper left', fontsize=14)
-        pyplot.savefig(f'predictors-profile-{forecast_depth:02d}-years.png', dpi=300)
+    def get_methods_score(stat: STAT_T) -> Tuple[Dict[str, int], Dict[str, float]]:
+        asb_score = defaultdict(int)
+        for errors in stat.values():
+            winner = min(errors, key=lambda u: errors[u])
+            asb_score[winner] += 1
+        total = sum(asb_score.values())
+        rel_score = {method: value / total * 100 for method, value in asb_score.items()}
+        return asb_score, rel_score
 
     @classmethod
     def main(cls) -> int:
