@@ -11,6 +11,7 @@ Usage:
 """
 
 __author__ = 'pkolomytsev'
+__version__ = '1.0.0'
 
 
 import argparse
