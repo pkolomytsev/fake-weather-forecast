@@ -30,7 +30,7 @@ This project uses [Python 3.6+](https://www.python.org/downloads/release/python-
     # analyse all data sets with increasing the experimental range to 50 years and forecast range to 5 years
     python show-forecast.py -e 50 -f 5
 
-    # analyse data sets and render forcast graphics for the selected stations (see ./data or data.zip)
+    # analyse data sets and render forecast graphics for the selected stations (see ./data or data.zip)
     python show-forecast.py -e 10 -f 1 22003 28009 29467
     
     # profile prediction methods (may be slow)
